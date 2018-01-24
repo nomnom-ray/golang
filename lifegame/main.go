@@ -1,13 +1,14 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log"
 	"runtime"
 	"strings"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
-	"github.com/go-gl/glfw/v3.2/glfw" //API for creating windows, contexts and surfaces...
+	"github.com/go-gl/gl/v4.1-core/gl" //needs gcc; msys32 used
+	"github.com/go-gl/glfw/v3.2/glfw"  //API for creating windows; needs installation
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -35,6 +36,11 @@ const (
 	` + "\x00"
 )
 
+type mapVector struct {
+	vertX, vertY, vertZ             float32 //always f32 for vertices to opengl
+	latitude, longtitude, elevation float64
+}
+
 func main() {
 	runtime.LockOSThread() //execute in the same OS thread; important for GLFW; always call on init
 
@@ -48,34 +54,28 @@ func main() {
 
 	projections(program)
 
-	vao := makeVao(triangle)
+	rightangle, vectorSize := mapMesh()
+
+	vao := makeVao(rightangle, vectorSize)
 
 	gl.Enable(gl.DEPTH_TEST)
 	gl.DepthFunc(gl.LESS)
 
 	for !window.ShouldClose() {
-		draw(vao, window, program)
+		draw(vao, window, program, rightangle)
 	}
 }
 
-func draw(vao uint32, window *glfw.Window, program uint32) {
+func draw(vao uint32, window *glfw.Window, program uint32, verts []mapVector) {
 	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-	gl.UseProgram(program)
+	//	gl.UseProgram(program)
 
 	gl.BindVertexArray(vao) //opengl recommends each object having a vao
-	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(triangle)/3))
+	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(verts)))
 
 	glfw.PollEvents()
 	window.SwapBuffers() //GLFW does double buf (draw invisible canvas, then swap it to visible canvas when ready)
 }
-
-var (
-	triangle = []float32{ //always f32 for vertices to opengl
-		-0.5, 0.5, 0, // top (x,y,z) of the window between (-1, 1)
-		-0.5, -0.5, 0, // left
-		0.5, -0.5, -0.5, // right; -ve Z pivots away from camera
-	}
-)
 
 // initGlfw initializes glfw and returns a Window to use.
 func initGlfw() *glfw.Window {
@@ -159,18 +159,28 @@ func projections(program uint32) {
 }
 
 // makeVao tells GPU using opengl what buffer to draw
-func makeVao(points []float32) uint32 { //Vertex Array Object
+func makeVao(rightangle []mapVector, vectorSize int32) uint32 { //Vertex Array Object
 	var vao uint32
 	gl.GenVertexArrays(1, &vao)
 	gl.BindVertexArray(vao)
 
-	var vbo uint32                                                                //vertex buffer object (or just buffer)
-	gl.GenBuffers(1, &vbo)                                                        //gen. UUID for 1 vbo and uint ptr to it
-	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)                                           //which VRAM (the target) to use for the vbo
-	gl.BufferData(gl.ARRAY_BUFFER, 4*len(points), gl.Ptr(points), gl.STATIC_DRAW) //filling the buffer with data: 4x4Bytes size; actual data; 2 GL properties
+	var vbo uint32                      //vertex buffer object (or just buffer)
+	gl.GenBuffers(1, &vbo)              //gen. UUID for 1 vbo and uint ptr to it
+	gl.BindBuffer(gl.ARRAY_BUFFER, vbo) //which VRAM (the target) to use for the vbo
+	gl.BufferData(
+		gl.ARRAY_BUFFER,
+		int(vectorSize)*len(rightangle),
+		gl.Ptr(rightangle),
+		gl.STATIC_DRAW) //filling the buffer with data: 4x4Bytes size; actual data; 2 GL properties
 
 	gl.EnableVertexAttribArray(0)
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(len(triangle)*4/3), nil) //position,color,texture are attributes of vertex; this line defines the attri. layout in buffer
+	gl.VertexAttribPointer(
+		0,
+		3,
+		gl.FLOAT,
+		false,
+		vectorSize,
+		nil) //position,color,texture are attributes of vertex; this line defines the attri. layout in buffer
 
 	return vao
 }
@@ -196,4 +206,48 @@ func compileShader(source string, shaderType uint32) (uint32, error) {
 	}
 
 	return shader, nil
+}
+
+var (
+	triangle = []float32{
+		-0.5, 0.5, 0, // top (x,y,z) of the window between (-1, 1)
+		-0.5, -0.5, 0, // left
+		0.5, -0.5, -0.5, // right; -ve Z pivots away from camera
+	}
+)
+
+func mapMesh() ([]mapVector, int32) {
+	var topPoint mapVector // top (x,y,z) of the window between (-1, 1)
+	topPoint.vertX = -0.5
+	topPoint.vertY = 0.5
+	topPoint.vertZ = 0
+	topPoint.latitude = 43.4527000
+	topPoint.longtitude = -80.4960000
+	topPoint.elevation = 328
+
+	var leftPoint mapVector
+	leftPoint.vertX = -0.5
+	leftPoint.vertY = -0.5
+	leftPoint.vertZ = 0
+	leftPoint.latitude = 43.4505000
+	leftPoint.longtitude = -80.4960000
+	leftPoint.elevation = 328.5
+
+	var rightPoint mapVector //-ve Z pivots away from camera
+	rightPoint.vertX = 0.5
+	rightPoint.vertY = -0.5
+	rightPoint.vertZ = -0.5
+	rightPoint.latitude = 43.4505000
+	rightPoint.longtitude = -80.4930000
+	rightPoint.elevation = 333
+
+	rightangle := []mapVector{}
+	rightangle = append(rightangle, topPoint)
+	rightangle = append(rightangle, rightPoint)
+	rightangle = append(rightangle, leftPoint)
+
+	vectorSize := int32(binary.Size(topPoint)) + 4
+
+	return rightangle, vectorSize
+
 }
