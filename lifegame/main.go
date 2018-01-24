@@ -12,7 +12,6 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// projection * camera *
 const (
 	width  = 500
 	height = 500
@@ -85,7 +84,7 @@ func initGlfw() *glfw.Window {
 
 	//global GLFW properties defining window
 	glfw.WindowHint(glfw.Resizable, glfw.False)
-	glfw.WindowHint(glfw.ContextVersionMajor, 4) // OR 2
+	glfw.WindowHint(glfw.ContextVersionMajor, 4)
 	glfw.WindowHint(glfw.ContextVersionMinor, 1)
 	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCoreProfile)
 	glfw.WindowHint(glfw.OpenGLForwardCompatible, glfw.True)
@@ -152,10 +151,6 @@ func projections(program uint32) {
 	camera := mgl32.LookAtV(mgl32.Vec3{0, 0, 3}, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
 	cameraUniform := gl.GetUniformLocation(program, gl.Str("camera\x00"))
 	gl.UniformMatrix4fv(cameraUniform, 1, false, &camera[0])
-
-	// model := mgl32.Ident4()
-	// modelUniform := gl.GetUniformLocation(program, gl.Str("model\x00"))
-	// gl.UniformMatrix4fv(modelUniform, 1, false, &model[0])
 }
 
 // makeVao tells GPU using opengl what buffer to draw
@@ -207,14 +202,6 @@ func compileShader(source string, shaderType uint32) (uint32, error) {
 
 	return shader, nil
 }
-
-var (
-	triangle = []float32{
-		-0.5, 0.5, 0, // top (x,y,z) of the window between (-1, 1)
-		-0.5, -0.5, 0, // left
-		0.5, -0.5, -0.5, // right; -ve Z pivots away from camera
-	}
-)
 
 func mapMesh() ([]mapVector, int32) {
 	var topPoint mapVector // top (x,y,z) of the window between (-1, 1)
