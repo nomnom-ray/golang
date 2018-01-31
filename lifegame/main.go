@@ -4,17 +4,22 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"math"
+	"os"
 	"runtime"
 	"strings"
 
 	"github.com/go-gl/gl/v4.1-core/gl" //needs gcc; msys32 used
-	"github.com/go-gl/glfw/v3.2/glfw"  //API for creating windows; needs installation
-	"github.com/go-gl/mathgl/mgl32"
+	"github.com/go-gl/glfw/v3.2/glfw"
+	"github.com/go-gl/mathgl/mgl32" //API for creating windows; needs installation
+	"github.com/gocarina/gocsv"
+	pb "gopkg.in/cheggaaa/pb.v1"
 )
 
 const (
-	width  = 500
-	height = 500
+	width            = 512
+	height           = 512
+	degRadConversion = math.Pi / 180
 
 	vertexShaderSource = `
 		#version 410
@@ -22,7 +27,7 @@ const (
 		uniform mat4 camera;
 		in vec3 vp;
 		void main() {
-			gl_Position = projection * camera * vec4(vp, 1.0);
+			gl_Position = vec4(vp, 1.0);
 		}
 	` + "\x00"
 
@@ -36,8 +41,8 @@ const (
 )
 
 type mapVector struct {
-	vertX, vertY, vertZ             float32 //always f32 for vertices to opengl
-	latitude, longtitude, elevation float64
+	VertX, VertY, VertZ             float32 //always f32 for vertices to opengl
+	Latitude, Longtitude, Elevation float64
 }
 
 func main() {
@@ -51,7 +56,7 @@ func main() {
 		panic(err)
 	}
 
-	projections(program)
+	// projections(program)
 
 	rightangle, vectorSize := mapMesh()
 
@@ -65,12 +70,13 @@ func main() {
 	}
 }
 
-func draw(vao uint32, window *glfw.Window, program uint32, verts []mapVector) {
+func draw(vao uint32, window *glfw.Window, program uint32, rightangle []mapVector) {
 	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 	//	gl.UseProgram(program)
 
-	gl.BindVertexArray(vao) //opengl recommends each object having a vao
-	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(verts)))
+	// gl.BindVertexArray(vao) //opengl recommends each object having a vao
+	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(rightangle)))
+	gl.DrawArrays(gl.POINTS, 0, int32(len(rightangle)))
 
 	glfw.PollEvents()
 	window.SwapBuffers() //GLFW does double buf (draw invisible canvas, then swap it to visible canvas when ready)
@@ -141,17 +147,28 @@ func initOpenGL() (uint32, error) {
 	return program, nil
 }
 
-func projections(program uint32) {
-	gl.UseProgram(program)
+// func projections(program uint32) {
+// 	gl.UseProgram(program)
 
-	projection := mgl32.Perspective(mgl32.DegToRad(45.0), float32(width)/height, 0.1, 10.0)
-	projectionUniform := gl.GetUniformLocation(program, gl.Str("projection\x00"))
-	gl.UniformMatrix4fv(projectionUniform, 1, false, &projection[0])
+// 	projection := mgl32.Perspective(
+// 		mgl32.DegToRad(45.0),
+// 		float32(width)/height,
+// 		0.1,
+// 		10.0)
+// 	projectionUniform := gl.GetUniformLocation(program, gl.Str("projection\x00"))
+// 	gl.UniformMatrix4fv(projectionUniform, 1, false, &projection[0])
 
-	camera := mgl32.LookAtV(mgl32.Vec3{0, 0, 3}, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
-	cameraUniform := gl.GetUniformLocation(program, gl.Str("camera\x00"))
-	gl.UniformMatrix4fv(cameraUniform, 1, false, &camera[0])
-}
+// 	// fmt.Println(projection)
+// 	// fmt.Println(projectionUniform)
+
+// 	camera := mgl32.LookAtV(
+// 		mgl32.Vec3{0, 0, 3},
+// 		mgl32.Vec3{0, 0, 0},
+// 		mgl32.Vec3{0, 1, 0})
+// 	cameraUniform := gl.GetUniformLocation(program, gl.Str("camera\x00"))
+// 	gl.UniformMatrix4fv(cameraUniform, 1, false, &camera[0])
+
+// }
 
 // makeVao tells GPU using opengl what buffer to draw
 func makeVao(rightangle []mapVector, vectorSize int32) uint32 { //Vertex Array Object
@@ -204,37 +221,97 @@ func compileShader(source string, shaderType uint32) (uint32, error) {
 }
 
 func mapMesh() ([]mapVector, int32) {
-	var topPoint mapVector // top (x,y,z) of the window between (-1, 1)
-	topPoint.vertX = -0.5
-	topPoint.vertY = 0.5
-	topPoint.vertZ = 0
-	topPoint.latitude = 43.4527000
-	topPoint.longtitude = -80.4960000
-	topPoint.elevation = 328
 
-	var leftPoint mapVector
-	leftPoint.vertX = -0.5
-	leftPoint.vertY = -0.5
-	leftPoint.vertZ = 0
-	leftPoint.latitude = 43.4505000
-	leftPoint.longtitude = -80.4960000
-	leftPoint.elevation = 328.5
+	// var compositeVectorElem mapVector
+	// var compositeVector []mapVector
 
-	var rightPoint mapVector //-ve Z pivots away from camera
-	rightPoint.vertX = 0.5
-	rightPoint.vertY = -0.5
-	rightPoint.vertZ = -0.5
-	rightPoint.latitude = 43.4505000
-	rightPoint.longtitude = -80.4930000
-	rightPoint.elevation = 333
+	// for i := 0; i <= int(len(triangle))/3; i += 3 {
+	// 	j := i + 1
+	// 	k := j + 1
+	// 	compositeVectorElem = mapVector{
+	// 		vertX:      triangle[i],
+	// 		vertY:      triangle[j],
+	// 		vertZ:      triangle[k],
+	// 		latitude:   0,
+	// 		longtitude: 0,
+	// 		elevation:  0,
+	// 	}
+	// 	compositeVector = append(compositeVector, compositeVectorElem)
+	// }
 
-	rightangle := []mapVector{}
-	rightangle = append(rightangle, topPoint)
-	rightangle = append(rightangle, rightPoint)
-	rightangle = append(rightangle, leftPoint)
+	// vectorSize := int32(binary.Size(compositeVectorElem)) + 4
 
-	vectorSize := int32(binary.Size(topPoint)) + 4
+	// pretty.Println(vectorSize)
+	// pretty.Println(int(len(compositeVector)))
 
-	return rightangle, vectorSize
+	// return compositeVector, vectorSize
 
+	fmt.Println("Generating image from downloaded vectors:")
+
+	clientsFile, err := os.Open("resultSouthEastWestNorth.csv")
+	if err != nil {
+		panic(err)
+	}
+	defer clientsFile.Close()
+
+	vectors := []mapVector{}
+
+	if err := gocsv.UnmarshalFile(clientsFile, &vectors); err != nil {
+		panic(err)
+	}
+
+	projectingProgress := pb.StartNew(int(len(vectors)))
+
+	sizeMat := mgl32.Scale3D(
+		1.0,
+		1.0,
+		1.0)
+	translateMat := mgl32.Translate3D(
+		0.0,
+		0.0,
+		0.0)
+	rotateXMat := mgl32.HomogRotate3DX(float32(degToRad(0)))
+	rotateYMat := mgl32.HomogRotate3DY(float32(degToRad(0)))
+	rotateZMat := mgl32.HomogRotate3DZ(float32(degToRad(0)))
+	perspectiveMat := mgl32.Perspective(
+		mgl32.DegToRad(30.0),
+		float32(width)/height,
+		0.1,
+		10.0)
+	cameraMat := mgl32.LookAtV(
+		mgl32.Vec3{0, 0, 3},
+		mgl32.Vec3{0, 0, 0},
+		mgl32.Vec3{0, 1, 0})
+	cameraPerspective := (&perspectiveMat).Mul4(cameraMat).Mul4(sizeMat).Mul4(translateMat).Mul4(rotateXMat).Mul4(rotateYMat).Mul4(rotateZMat)
+
+	var vector []mapVector
+	for _, vectorelem := range vectors {
+		vertex := mgl32.Vec3{vectorelem.VertX, vectorelem.VertY, vectorelem.VertZ}
+
+		perspectiveVector := mgl32.TransformCoordinate(vertex, cameraPerspective)
+
+		vectorelem.VertX = perspectiveVector[0]
+		vectorelem.VertY = perspectiveVector[1]
+		vectorelem.VertZ = perspectiveVector[2]
+
+		projectingProgress.Increment()
+		vector = append(vector, vectorelem)
+
+	}
+
+	vectorSize := int32(binary.Size(vector[0])) + 4
+
+	return vector, vectorSize
 }
+
+func degToRad(d float64) float64 { return d * degRadConversion }
+
+/*
+var (
+	triangle = []float32{
+
+	}
+)
+
+
+*/
