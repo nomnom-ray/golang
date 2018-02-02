@@ -9,17 +9,26 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/kr/pretty"
+
 	"github.com/go-gl/gl/v4.1-core/gl" //needs gcc; msys32 used
 	"github.com/go-gl/glfw/v3.2/glfw"
 	"github.com/go-gl/mathgl/mgl32" //API for creating windows; needs installation
 	"github.com/gocarina/gocsv"
-	pb "gopkg.in/cheggaaa/pb.v1"
+	"gopkg.in/cheggaaa/pb.v1"
 )
 
 const (
-	width            = 512
-	height           = 512
+	width            = 1280
+	height           = 720
 	degRadConversion = math.Pi / 180
+
+	//south-east to north-west
+	//lat goes south north; long east west
+	latEnd, lngEnd     = 43.45270, -80.49600
+	latStart, lngStart = 43.45050, -80.49300
+	samplesLat         = 220.0 //must be float
+	samplesLng         = 220.0 //must be float
 
 	vertexShaderSource = `
 		#version 410
@@ -75,7 +84,7 @@ func draw(vao uint32, window *glfw.Window, program uint32, rightangle []mapVecto
 	//	gl.UseProgram(program)
 
 	// gl.BindVertexArray(vao) //opengl recommends each object having a vao
-	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(rightangle)))
+	// gl.DrawArrays(gl.TRIANGLES, 0, int32(len(rightangle)))
 	gl.DrawArrays(gl.POINTS, 0, int32(len(rightangle)))
 
 	glfw.PollEvents()
@@ -162,7 +171,7 @@ func initOpenGL() (uint32, error) {
 // 	// fmt.Println(projectionUniform)
 
 // 	camera := mgl32.LookAtV(
-// 		mgl32.Vec3{0, 0, 3},
+// 		mgl32.Vec3{1, 1, 1},
 // 		mgl32.Vec3{0, 0, 0},
 // 		mgl32.Vec3{0, 1, 0})
 // 	cameraUniform := gl.GetUniformLocation(program, gl.Str("camera\x00"))
@@ -222,6 +231,105 @@ func compileShader(source string, shaderType uint32) (uint32, error) {
 
 func mapMesh() ([]mapVector, int32) {
 
+	// ellipsoidConfig := ellipsoid.Init(
+	// 	"WGS84",
+	// 	ellipsoid.Degrees,
+	// 	ellipsoid.Meter,
+	// 	ellipsoid.LongitudeIsSymmetric,
+	// 	ellipsoid.BearingIsSymmetric)
+
+	// LongMeteric, _ := ellipsoidConfig.To(
+	// 	latStart,
+	// 	lngStart,
+	// 	latStart,
+	// 	lngEnd)
+
+	// latMeteric, _ := ellipsoidConfig.To(
+	// 	latStart,
+	// 	lngStart,
+	// 	latEnd,
+	// 	lngStart)
+
+	fmt.Println("Generating image from downloaded vectors:")
+
+	clientsFile, err := os.Open("resultSouthEastWestNorth3.csv")
+	if err != nil {
+		panic(err)
+	}
+	defer clientsFile.Close()
+
+	vectors := []mapVector{}
+
+	if err := gocsv.UnmarshalFile(clientsFile, &vectors); err != nil {
+		panic(err)
+	}
+
+	projectingProgress := pb.StartNew(int(len(vectors)))
+
+	// cameraX := float32(120.5)
+	// cameraZ := float32(147.8)
+	// cameraHeight := float32(2.0)
+	// groundRef := float32(4.3246)
+	// maxVert := float32(math.Max(latMeteric, LongMeteric))
+	scaleFactor := float32(1.0)
+	sizeMat := mgl32.Scale3D(scaleFactor, scaleFactor, scaleFactor)
+	// cmIntervalNorm := 0.01 / maxVert * 100.0
+	// cmIntervalNormScaled := cmIntervalNorm * scaleFactor
+	// cameraPosition := mgl32.Vec3{cameraX * cmIntervalNormScaled, (cameraHeight + groundRef) * cmIntervalNormScaled, cameraZ * cmIntervalNormScaled}
+
+	cameraPosition := mgl32.Vec3{0.2, 0.2, -0.6}
+
+	cameraViewDirection := mgl32.Vec3{0, 0, 1}
+	cameraUp := mgl32.Vec3{0, 1, 0}
+	cameraViewDirection = mgl32.QuatRotate(float32(degToRad(0)), cameraUp).Rotate(cameraViewDirection)
+	cameraViewDirection = mgl32.QuatRotate(float32(degToRad(0)), cameraViewDirection.Cross(cameraUp)).Rotate(cameraViewDirection)
+	translateMat := mgl32.Translate3D(0, 0, 0)
+	rotateXMat := mgl32.HomogRotate3DX(float32(degToRad(0)))
+	rotateYMat := mgl32.HomogRotate3DY(float32(degToRad(0)))
+	rotateZMat := mgl32.HomogRotate3DZ(float32(degToRad(0)))
+
+	// pretty.Println(cameraPosition)
+
+	perspectiveMat := mgl32.Perspective(mgl32.DegToRad(60.0), float32(width)/height, 0.001, 10.0)
+	cameraMat := mgl32.LookAtV(
+		cameraPosition,                            //position of camera
+		(cameraPosition).Add(cameraViewDirection), //direction of view
+		cameraUp) //direction of camera orientation
+
+	cameraPerspective := (&perspectiveMat).Mul4(cameraMat).Mul4(sizeMat).Mul4(translateMat).Mul4(rotateXMat).Mul4(rotateYMat).Mul4(rotateZMat)
+
+	pretty.Println(cameraPerspective)
+
+	var vector []mapVector
+	for _, vectorelem := range vectors {
+		vertex := mgl32.Vec3{vectorelem.VertX, vectorelem.VertY, vectorelem.VertZ}
+
+		perspectiveVector := mgl32.TransformCoordinate(vertex, cameraPerspective)
+
+		vectorelem.VertX = perspectiveVector[0]
+		vectorelem.VertY = perspectiveVector[1]
+		vectorelem.VertZ = perspectiveVector[2]
+
+		projectingProgress.Increment()
+		vector = append(vector, vectorelem)
+
+	}
+
+	clientsFile2, err := os.OpenFile("vector.csv", os.O_RDWR|os.O_CREATE, os.ModePerm)
+	if err != nil {
+		panic(err)
+	}
+	defer clientsFile.Close()
+
+	err = gocsv.MarshalFile(&vector, clientsFile2)
+	if err != nil {
+		panic(err)
+	}
+
+	vectorSize := int32(binary.Size(vector[0])) + 4
+
+	return vector, vectorSize
+
 	// var compositeVectorElem mapVector
 	// var compositeVector []mapVector
 
@@ -245,63 +353,6 @@ func mapMesh() ([]mapVector, int32) {
 	// pretty.Println(int(len(compositeVector)))
 
 	// return compositeVector, vectorSize
-
-	fmt.Println("Generating image from downloaded vectors:")
-
-	clientsFile, err := os.Open("resultSouthEastWestNorth.csv")
-	if err != nil {
-		panic(err)
-	}
-	defer clientsFile.Close()
-
-	vectors := []mapVector{}
-
-	if err := gocsv.UnmarshalFile(clientsFile, &vectors); err != nil {
-		panic(err)
-	}
-
-	projectingProgress := pb.StartNew(int(len(vectors)))
-
-	sizeMat := mgl32.Scale3D(
-		1.0,
-		1.0,
-		1.0)
-	translateMat := mgl32.Translate3D(
-		0.0,
-		0.0,
-		0.0)
-	rotateXMat := mgl32.HomogRotate3DX(float32(degToRad(0)))
-	rotateYMat := mgl32.HomogRotate3DY(float32(degToRad(0)))
-	rotateZMat := mgl32.HomogRotate3DZ(float32(degToRad(0)))
-	perspectiveMat := mgl32.Perspective(
-		mgl32.DegToRad(30.0),
-		float32(width)/height,
-		0.1,
-		10.0)
-	cameraMat := mgl32.LookAtV(
-		mgl32.Vec3{0, 0, 3},
-		mgl32.Vec3{0, 0, 0},
-		mgl32.Vec3{0, 1, 0})
-	cameraPerspective := (&perspectiveMat).Mul4(cameraMat).Mul4(sizeMat).Mul4(translateMat).Mul4(rotateXMat).Mul4(rotateYMat).Mul4(rotateZMat)
-
-	var vector []mapVector
-	for _, vectorelem := range vectors {
-		vertex := mgl32.Vec3{vectorelem.VertX, vectorelem.VertY, vectorelem.VertZ}
-
-		perspectiveVector := mgl32.TransformCoordinate(vertex, cameraPerspective)
-
-		vectorelem.VertX = perspectiveVector[0]
-		vectorelem.VertY = perspectiveVector[1]
-		vectorelem.VertZ = perspectiveVector[2]
-
-		projectingProgress.Increment()
-		vector = append(vector, vectorelem)
-
-	}
-
-	vectorSize := int32(binary.Size(vector[0])) + 4
-
-	return vector, vectorSize
 }
 
 func degToRad(d float64) float64 { return d * degRadConversion }

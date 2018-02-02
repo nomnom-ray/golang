@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	windWidth        = 1280.0
-	windHeight       = 720.0
+	windWidth  = 1280.0
+	windHeight = 720.0
+
 	degRadConversion = math.Pi / 180
 	imageAspectRatio = windWidth / windHeight
 
@@ -192,7 +193,7 @@ func projection(maxVert float64) {
 
 	img := image.NewNRGBA(image.Rect(0, 0, windWidth, windHeight))
 
-	clientsFile, err := os.Open("resultNormModel.csv")
+	clientsFile, err := os.Open("resultSouthEastWestNorth3.csv")
 	if err != nil {
 		panic(err)
 	}
@@ -206,35 +207,37 @@ func projection(maxVert float64) {
 
 	projectingProgress := pb.StartNew(int(len(vectors)))
 
-	cameraX := (120.5)
-	cameraZ := (147.8)
-	cameraHeight := (2.0)
-	groundRef := (4.3246)
-	// maxVert := (math.Max(latMeteric, LongMeteric))
+	// cameraX := (120.5)
+	// cameraZ := (147.8)
+	// cameraHeight := (2.0)
+	// groundRef := (4.3246)
 	scaleFactor := (1.0)
 	sizeMat := mgl64.Scale3D(scaleFactor, scaleFactor, scaleFactor)
-	cmIntervalNorm := 0.01 / maxVert * 100.0
-	cmIntervalNormScaled := cmIntervalNorm * scaleFactor
+	// cmIntervalNorm := 0.01 / maxVert * 100.0
+	// cmIntervalNormScaled := cmIntervalNorm * scaleFactor
 
-	cameraPosition := mgl64.Vec3{cameraX * cmIntervalNormScaled, (cameraHeight + groundRef) * cmIntervalNormScaled, cameraZ * cmIntervalNormScaled}
+	// cameraPosition := mgl64.Vec3{cameraX * cmIntervalNormScaled, (cameraHeight + groundRef) * cmIntervalNormScaled, cameraZ * cmIntervalNormScaled}
+
+	cameraPosition := mgl64.Vec3{0.2, 0.2, -0.6}
+
 	cameraViewDirection := mgl64.Vec3{0, 0, 1}
 	cameraUp := mgl64.Vec3{0, 1, 0}
-	cameraViewDirection = mgl64.QuatRotate((degToRad(0)), cameraUp).Rotate(cameraViewDirection)
-	cameraViewDirection = mgl64.QuatRotate((degToRad(0)), cameraViewDirection.Cross(cameraUp)).Rotate(cameraViewDirection)
+	cameraViewDirection = mgl64.QuatRotate(degToRad(0), cameraUp).Rotate(cameraViewDirection)
+	cameraViewDirection = mgl64.QuatRotate(degToRad(0), cameraViewDirection.Cross(cameraUp)).Rotate(cameraViewDirection)
 	translateMat := mgl64.Translate3D(0, 0, 0)
-	rotateXMat := mgl64.HomogRotate3DX((degToRad(0)))
-	rotateYMat := mgl64.HomogRotate3DY((degToRad(0)))
-	rotateZMat := mgl64.HomogRotate3DZ((degToRad(0)))
+	rotateXMat := mgl64.HomogRotate3DX(degToRad(0))
+	rotateYMat := mgl64.HomogRotate3DY(degToRad(0))
+	rotateZMat := mgl64.HomogRotate3DZ(degToRad(0))
 
-	pretty.Println(cameraPosition)
-
-	perspectiveMat := mgl64.Perspective(mgl64.DegToRad(60.0), imageAspectRatio, 0.01, 1.0)
+	perspectiveMat := mgl64.Perspective(mgl64.DegToRad(60.0), float64(windWidth)/windHeight, 0.001, 10.0)
 	cameraMat := mgl64.LookAtV(
 		cameraPosition,                            //position of camera
 		(cameraPosition).Add(cameraViewDirection), //direction of view
 		cameraUp) //direction of camera orientation
 
 	cameraPerspective := (&perspectiveMat).Mul4(cameraMat).Mul4(sizeMat).Mul4(translateMat).Mul4(rotateXMat).Mul4(rotateYMat).Mul4(rotateZMat)
+
+	pretty.Println(cameraPerspective)
 
 	for _, vector := range vectors {
 		vertex := mgl64.Vec3{vector.VertX, vector.VertY, vector.VertZ}
@@ -247,9 +250,13 @@ func projection(maxVert float64) {
 		if vector.VertX < -imageAspectRatio || vector.VertX > imageAspectRatio || vector.VertY < -1 || vector.VertY > 1 {
 			continue
 		}
-		vector.VertX = math.Min(windWidth-1, (perspectiveVector[0]+1)*0.5*windWidth)
-		vector.VertY = math.Min(windHeight-1, (1-(perspectiveVector[1]+1)*0.5)*windHeight)
-		vector.VertZ = 0
+		// vector.VertX = math.Min(windWidth-1, (perspectiveVector[0]+1)*0.5*windWidth)
+		// vector.VertY = math.Min(windHeight-1, (1-(perspectiveVector[1]+1)*0.5)*windHeight)
+		// vector.VertZ = 0
+
+		vector.VertX = perspectiveVector[0]
+		vector.VertY = perspectiveVector[1]
+		vector.VertZ = perspectiveVector[2]
 
 		for y := 0; y < windHeight; y++ {
 			for x := 0; x < windWidth; x++ {
@@ -259,6 +266,17 @@ func projection(maxVert float64) {
 
 		projectingProgress.Increment()
 
+	}
+
+	clientsFile2, err := os.OpenFile("vectors.csv", os.O_RDWR|os.O_CREATE, os.ModePerm)
+	if err != nil {
+		panic(err)
+	}
+	defer clientsFile.Close()
+
+	err = gocsv.MarshalFile(&vectors, clientsFile2)
+	if err != nil {
+		panic(err)
 	}
 
 	f, err := os.Create("imgTransparentBG.png")
