@@ -8,10 +8,12 @@ import (
 	"math"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/StefanSchroeder/Golang-Ellipsoid/ellipsoid"
-	"github.com/go-gl/mathgl/mgl64"
 	"github.com/gocarina/gocsv"
+	"github.com/nfnt/resize"
+	"github.com/nomnom-ray/fauxgl"
 	"googlemaps.github.io/maps"
 	"gopkg.in/cheggaaa/pb.v1"
 )
@@ -28,6 +30,20 @@ const (
 	latStart, lngStart  = 43.45050, -80.49300
 	sampleResolutionLat = 0.001 //degrees
 	sampleResolutionLng = 0.001 //degrees
+
+	scale = 4     // optional supersampling
+	fovy  = 30.0  // vertical field of view in degrees
+	near  = 0.001 // near clipping plane
+	far   = 10.0  // far clipping plane
+)
+
+var (
+	eye        = fauxgl.V(0, 0, 0)                  // camera position
+	center     = fauxgl.V(0, 0, 1)                  // view center position
+	up         = fauxgl.V(0, 1, 0)                  // up vector
+	light      = fauxgl.V(0.75, 0.5, 1).Normalize() // light direction
+	color      = fauxgl.HexColor("#468966")         // object color
+	background = fauxgl.HexColor("#FFF8E3")         // background color
 )
 
 //type declaration is at the very end
@@ -60,16 +76,8 @@ func main() {
 
 func projection(maxVert float64) {
 
-	//TODO: a camera location parser
-	// cameraLocation := [...]float64{latStart, lngStart}
-
-	// fmt.Println("Generating image from downloaded vectors:")
-	//variable declaration
-	// img := image.NewNRGBA(image.Rect(0, 0, windWidth, windHeight))
 	compositeVector := []*mapVector{}
 	primitiveIndex := []*mapPrimitiveIndex{}
-	rasterVectors := []rasterVector{}
-	var rasterVectorUnit rasterVector
 
 	//read 3D vector model into struct
 	clientsFile, err := os.Open("resultNormModel.csv")
@@ -97,106 +105,105 @@ func projection(maxVert float64) {
 		compositeVector[i].VertZ = compositeVector[i].VertZ / maxVert
 	}
 
-	// projectingProgress := pb.StartNew(int(len(compositeVector)))
+	//constructing a mesh of triangles from index to normalized vertices
+	var triangles []*fauxgl.Triangle
+	counter := 0.0
+
+	primitiveCounter := 0.0
+	for _, index := range primitiveIndex[2:3] {
+		var triangle fauxgl.Triangle
+		for inner := 0; inner < 3; inner++ {
+			primitiveCounter = math.Mod(counter, 3)
+			if primitiveCounter == 0 {
+				triangle.V1.Position = fauxgl.Vector{
+					X: compositeVector[index.PrimitiveBottom].VertX,
+					Y: compositeVector[index.PrimitiveBottom].VertY,
+					Z: compositeVector[index.PrimitiveBottom].VertZ,
+				}
+				triangle.V1.Texture = fauxgl.Vector{
+					X: compositeVector[index.PrimitiveBottom].Latitude,
+					Y: compositeVector[index.PrimitiveBottom].Elevation,
+					Z: compositeVector[index.PrimitiveBottom].Longtitude,
+				}
+			} else if primitiveCounter == 1 {
+				triangle.V2.Position = fauxgl.Vector{
+					X: compositeVector[index.PrimitiveTop].VertX,
+					Y: compositeVector[index.PrimitiveTop].VertY,
+					Z: compositeVector[index.PrimitiveTop].VertZ,
+				}
+				triangle.V2.Texture = fauxgl.Vector{
+					X: compositeVector[index.PrimitiveTop].Latitude,
+					Y: compositeVector[index.PrimitiveTop].Elevation,
+					Z: compositeVector[index.PrimitiveTop].Longtitude,
+				}
+			} else if primitiveCounter == 2 {
+				triangle.V3.Position = fauxgl.Vector{
+					X: compositeVector[index.PrimitiveLeft].VertX,
+					Y: compositeVector[index.PrimitiveLeft].VertY,
+					Z: compositeVector[index.PrimitiveLeft].VertZ,
+				}
+				triangle.V3.Texture = fauxgl.Vector{
+					X: compositeVector[index.PrimitiveLeft].Latitude,
+					Y: compositeVector[index.PrimitiveLeft].Elevation,
+					Z: compositeVector[index.PrimitiveLeft].Longtitude,
+				}
+			}
+			counter++
+		}
+		triangle.FixNormals()
+		triangles = append(triangles, &triangle)
+	}
+	mesh := fauxgl.NewEmptyMesh()
+	triangleMesh := fauxgl.NewTriangleMesh(triangles)
+	mesh.Add(triangleMesh)
+
+	context := fauxgl.NewContext(windWidth*scale, windHeight*scale)
+	context.ClearColorBufferWith(fauxgl.Black)
 
 	//camera and projection parameters to create a single matrix
 	cameraRotationLR := float64(0.0)    //-ve rotates camera clockwise in degrees
 	cameraRotationUD := float64(90.0)   //-ve rotates camera downwards in degrees
-	cameraX := float64(0.0)             //-ve pans camera to the right in meters
-	cameraZ := float64(0.0)             //-ve pans camera to the back in meters
-	cameraHeight := float64(0.00002252) //height of the camera from ground in meters
-	groundRef := float64(0.0) - 0.005   //ground reference to the lowest ground point in the tile
+	cameraX := float64(0.0)             //-ve pans camera to the right
+	cameraZ := float64(0.0)             //-ve pans camera to the back
+	cameraHeight := float64(0.00002252) //height of the camera from ground
+	groundRef := float64(0.0) - 0.02    //ground reference to the lowest ground point in the tile
 
-	cameraPosition := mgl64.Vec3{cameraX / maxVert,
-		(cameraHeight + groundRef) / maxVert, cameraZ / maxVert}
-
-	cameraViewDirection := mgl64.Vec3{0, 0, 1}
-	cameraUp := mgl64.Vec3{0, 1, 0}
-	cameraViewDirection = mgl64.QuatRotate(
+	cameraPosition := fauxgl.Vector{
+		X: cameraX / maxVert,
+		Y: (cameraHeight + groundRef) / maxVert,
+		Z: cameraZ / maxVert,
+	}
+	cameraViewDirection := fauxgl.Vector{
+		X: 0,
+		Y: 0,
+		Z: 1,
+	}
+	cameraUp := fauxgl.Vector{
+		X: 0,
+		Y: 1,
+		Z: 0,
+	}
+	cameraViewDirection = fauxgl.QuatRotate(
 		degToRad(cameraRotationLR), cameraUp).Rotate(cameraViewDirection)
-	cameraViewDirection = mgl64.QuatRotate(
+	cameraViewDirection = fauxgl.QuatRotate(
 		degToRad(cameraRotationUD), cameraViewDirection.Cross(cameraUp)).Rotate(cameraViewDirection)
+	cameraPerspective := fauxgl.LookAt(
+		cameraPosition, (cameraPosition).Add(cameraViewDirection), cameraUp).Perspective(
+		fovy, imageAspectRatio, near, far)
 
-	translateMat := mgl64.Translate3D(0, 0, 0)
-	rotateXMat := mgl64.HomogRotate3DX(degToRad(0))
-	rotateYMat := mgl64.HomogRotate3DY(degToRad(0))
-	rotateZMat := mgl64.HomogRotate3DZ(degToRad(0))
+	//shading
+	shader := fauxgl.NewPhongShader(cameraPerspective, light, eye)
+	shader.ObjectColor = color
+	context.Shader = shader
+	start := time.Now()
+	context.DrawMesh(mesh)
+	fmt.Println(time.Since(start))
 
-	perspectiveMat := mgl64.Perspective(mgl64.DegToRad(90.0), imageAspectRatio, 0.001, 10.0)
-	cameraMat := mgl64.LookAtV(
-		cameraPosition,                            //position of camera
-		(cameraPosition).Add(cameraViewDirection), //direction of view
-		cameraUp) //direction of camera orientation
+	image := context.Image()
+	image = resize.Resize(windWidth, windHeight, image, resize.Bilinear)
 
-	//cameraPerspective: the matrix for 3D-2D vector conversion
-	cameraPerspective := (&perspectiveMat).Mul4(
-		cameraMat).Mul4(translateMat).Mul4(rotateXMat).Mul4(rotateYMat).Mul4(rotateZMat)
+	fauxgl.SavePNG("out.png", image)
 
-	// counter := 0.0
-	// primitiveCounter := 0.0
-
-	//loop converts vectors from 3D model, writes to struct for outputing to .csv and .png
-	for _, vector := range compositeVector {
-		vertex := mgl64.Vec3{vector.VertX, vector.VertY, vector.VertZ}
-		perspectiveVector := mgl64.TransformCoordinate(vertex, cameraPerspective)
-		vector.VertX = perspectiveVector[0]
-		vector.VertY = perspectiveVector[1]
-		vector.VertZ = perspectiveVector[2]
-
-		if vector.VertX < -imageAspectRatio || vector.VertX > imageAspectRatio || vector.VertZ < -1 || vector.VertZ > 1 {
-			// projectingProgress.Increment()
-			continue
-		}
-		if windWidth > uint32((perspectiveVector[0]+1)*0.5*windWidth) {
-			rasterVectorUnit.RasterX = uint32((perspectiveVector[0] + 1) * 0.5 * windWidth)
-		} else {
-			rasterVectorUnit.RasterX = windWidth
-		}
-		if windHeight > uint32((1-(perspectiveVector[1]+1)*0.5)*windHeight) {
-			rasterVectorUnit.RasterY = uint32((1 - (perspectiveVector[1]+1)*0.5) * windHeight)
-		} else {
-			rasterVectorUnit.RasterY = windHeight
-		}
-		rasterVectors = append(rasterVectors, rasterVectorUnit)
-
-		//create more color pixels around each vector pixel to make them look bigger
-		// for i := 0; i < 5; i++ {
-		// 	img.Set(int((rasterVectorUnit).RasterX),
-		// 		int((rasterVectorUnit).RasterY)-2+i, color.NRGBA{0, 255, 255, 255})
-		// 	img.Set(int((rasterVectorUnit).RasterX)-2+i,
-		// 		int((rasterVectorUnit).RasterY), color.NRGBA{0, 255, 255, 255})
-		// 	img.Set(int((rasterVectorUnit).RasterX)-1+i,
-		// 		int((rasterVectorUnit).RasterY)-1+i, color.NRGBA{0, 255, 255, 255})
-		// 	img.Set(int((rasterVectorUnit).RasterX)+1-i,
-		// 		int((rasterVectorUnit).RasterY)+1-i, color.NRGBA{0, 0, 0, 255})
-		// }
-		// pretty.Println("perspective vector:", vector)
-		// projectingProgress.Increment()
-	}
-
-	//output rasterized vector data
-	clientsFile3, err := os.OpenFile("resultPerspectiveModel.csv", os.O_RDWR|os.O_CREATE, os.ModePerm)
-	if err != nil {
-		panic(err)
-	}
-	defer clientsFile3.Close()
-	err = gocsv.MarshalFile(&rasterVectors, clientsFile3)
-	if err != nil {
-		panic(err)
-	}
-	// f, err := os.Create("imgTransparentBG.png")
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// if err := png.Encode(f, img); err != nil {
-	// 	f.Close()
-	// 	log.Fatal(err)
-	// }
-	// if err := f.Close(); err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	// projectingProgress.FinishPrint("Image generated.")
 }
 
 func getModel() (maxVert float64) {
