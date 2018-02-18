@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kr/pretty"
+
 	"github.com/StefanSchroeder/Golang-Ellipsoid/ellipsoid"
 	"github.com/gocarina/gocsv"
 	"github.com/nfnt/resize"
@@ -42,8 +44,10 @@ var (
 	center     = fauxgl.V(0, 0, 1)                  // view center position
 	up         = fauxgl.V(0, 1, 0)                  // up vector
 	light      = fauxgl.V(0.75, 0.5, 1).Normalize() // light direction
-	color      = fauxgl.HexColor("#468966")         // object color
+	color      = fauxgl.HexColor("#ffb5b5")         // object color
 	background = fauxgl.HexColor("#FFF8E3")         // background color
+	pickedX    = 1245
+	pickedY    = 361
 )
 
 //type declaration is at the very end
@@ -68,13 +72,56 @@ func main() {
 
 	// create a cartesian model with GCS as units
 	maxVert := getModel()
-
+	cameraPerspective := cameraModel(maxVert)
 	//3D-2D conversion
-	projection(maxVert)
+	triangles, primitiveOnScreen := projection(maxVert, cameraPerspective)
+
+	// pretty.Println("array out of Projection:", primitiveOnScreen)
+
+	if _, ok := rasterPicking(pickedX, pickedY, triangles, primitiveOnScreen, cameraPerspective); ok {
+		// pretty.Println(primitiveSelected)
+	} else {
+		pretty.Println("picking: primitive not selected.")
+	}
 
 }
 
-func projection(maxVert float64) {
+func cameraModel(maxVert float64) fauxgl.Matrix {
+	//camera and projection parameters to create a single matrix
+	cameraRotationLR := float64(0.0)    //-ve rotates camera clockwise in degrees
+	cameraRotationUD := float64(90.0)   //-ve rotates camera downwards in degrees
+	cameraX := float64(0.011)           //-ve pans camera to the right
+	cameraZ := float64(0.0)             //-ve pans camera to the back
+	cameraHeight := float64(0.00002252) //height of the camera from ground
+	groundRef := float64(0.0) - 0.02    //ground reference to the lowest ground point in the tile
+
+	cameraPosition := fauxgl.Vector{
+		X: cameraX / maxVert,
+		Y: (cameraHeight + groundRef) / maxVert,
+		Z: cameraZ / maxVert,
+	}
+	cameraViewDirection := fauxgl.Vector{
+		X: 0,
+		Y: 0,
+		Z: 1,
+	}
+	cameraUp := fauxgl.Vector{
+		X: 0,
+		Y: 1,
+		Z: 0,
+	}
+	cameraViewDirection = fauxgl.QuatRotate(
+		degToRad(cameraRotationLR), cameraUp).Rotate(cameraViewDirection)
+	cameraViewDirection = fauxgl.QuatRotate(
+		degToRad(cameraRotationUD), cameraViewDirection.Cross(cameraUp)).Rotate(cameraViewDirection)
+	cameraPerspective := fauxgl.LookAt(
+		cameraPosition, (cameraPosition).Add(cameraViewDirection), cameraUp).Perspective(
+		fovy, imageAspectRatio, near, far)
+
+	return cameraPerspective
+}
+
+func projection(maxVert float64, cameraPerspective fauxgl.Matrix) ([]*fauxgl.Triangle, []int) {
 
 	compositeVector := []*mapVector{}
 	primitiveIndex := []*mapPrimitiveIndex{}
@@ -110,7 +157,7 @@ func projection(maxVert float64) {
 	counter := 0.0
 
 	primitiveCounter := 0.0
-	for _, index := range primitiveIndex[2:3] {
+	for _, index := range primitiveIndex[:5] {
 		var triangle fauxgl.Triangle
 		for inner := 0; inner < 3; inner++ {
 			primitiveCounter = math.Mod(counter, 3)
@@ -157,53 +204,82 @@ func projection(maxVert float64) {
 	triangleMesh := fauxgl.NewTriangleMesh(triangles)
 	mesh.Add(triangleMesh)
 
-	context := fauxgl.NewContext(windWidth*scale, windHeight*scale)
-	context.ClearColorBufferWith(fauxgl.Black)
-
-	//camera and projection parameters to create a single matrix
-	cameraRotationLR := float64(0.0)    //-ve rotates camera clockwise in degrees
-	cameraRotationUD := float64(90.0)   //-ve rotates camera downwards in degrees
-	cameraX := float64(0.0)             //-ve pans camera to the right
-	cameraZ := float64(0.0)             //-ve pans camera to the back
-	cameraHeight := float64(0.00002252) //height of the camera from ground
-	groundRef := float64(0.0) - 0.02    //ground reference to the lowest ground point in the tile
-
-	cameraPosition := fauxgl.Vector{
-		X: cameraX / maxVert,
-		Y: (cameraHeight + groundRef) / maxVert,
-		Z: cameraZ / maxVert,
-	}
-	cameraViewDirection := fauxgl.Vector{
-		X: 0,
-		Y: 0,
-		Z: 1,
-	}
-	cameraUp := fauxgl.Vector{
-		X: 0,
-		Y: 1,
-		Z: 0,
-	}
-	cameraViewDirection = fauxgl.QuatRotate(
-		degToRad(cameraRotationLR), cameraUp).Rotate(cameraViewDirection)
-	cameraViewDirection = fauxgl.QuatRotate(
-		degToRad(cameraRotationUD), cameraViewDirection.Cross(cameraUp)).Rotate(cameraViewDirection)
-	cameraPerspective := fauxgl.LookAt(
-		cameraPosition, (cameraPosition).Add(cameraViewDirection), cameraUp).Perspective(
-		fovy, imageAspectRatio, near, far)
+	//creating the window for CPU render
+	contextRender := fauxgl.NewContext(windWidth*scale, windHeight*scale)
+	contextRender.SetPickingFlag(false)
+	contextRender.ClearColorBufferWith(fauxgl.Transparent)
+	// contextRender.ClearDepthBuffer()
 
 	//shading
 	shader := fauxgl.NewPhongShader(cameraPerspective, light, eye)
 	shader.ObjectColor = color
-	context.Shader = shader
+	contextRender.Shader = shader
 	start := time.Now()
-	context.DrawMesh(mesh)
-	fmt.Println(time.Since(start))
+	contextRender.DrawMesh(mesh)
+	fmt.Println("**********RENDERING**********", time.Since(start), "**********RENDERING**********")
 
-	image := context.Image()
+	image := contextRender.Image()
 	image = resize.Resize(windWidth, windHeight, image, resize.Bilinear)
 
 	fauxgl.SavePNG("out.png", image)
 
+	return triangles, contextRender.PrimitiveSelectable()
+}
+
+func rasterPicking(pickedX, pickedY int, triangles []*fauxgl.Triangle, primitiveOnScreen []int, cameraPerspective fauxgl.Matrix) (int, bool) {
+
+	var trianglesOnScreen []*fauxgl.Triangle
+
+	primitiveOnScreen = sliceUniqMap(primitiveOnScreen)
+
+	// pretty.Println("array in picking:", primitiveOnScreen)
+	// pretty.Println("triangles length:", len(triangles))
+
+	if len(primitiveOnScreen) == 1 {
+		trianglesOnScreen = append(trianglesOnScreen, triangles[primitiveOnScreen[0]])
+	} else if len(primitiveOnScreen) > 1 {
+		for _, i := range primitiveOnScreen {
+			trianglesOnScreen = append(trianglesOnScreen, triangles[primitiveOnScreen[i]])
+		}
+	}
+
+	meshOnScreen := fauxgl.NewEmptyMesh()
+	triangleMesh := fauxgl.NewTriangleMesh(trianglesOnScreen)
+	meshOnScreen.Add(triangleMesh)
+
+	//creating the window for CPU render
+	contextPicking := fauxgl.NewContext(windWidth*scale, windHeight*scale)
+	contextPicking.SetPickedXY(pickedX*scale, pickedY*scale)
+	contextPicking.SetPickingFlag(true)
+	contextPicking.SetPrimitiveOnScreen(nil)
+	// contextPicking.ClearDepthBuffer()
+
+	//shading
+	shader := fauxgl.NewPhongShader(cameraPerspective, light, eye)
+	shader.ObjectColor = color
+	contextPicking.Shader = shader
+	start := time.Now()
+	contextPicking.DrawMesh(meshOnScreen)
+	fmt.Println("**********PICKING**********", time.Since(start), "**********PICKING**********")
+
+	if contextPicking.PrimitiveOnScreen == nil {
+		return 0, false
+	}
+	return primitiveOnScreen[0], true
+}
+
+func sliceUniqMap(s []int) []int {
+	seen := make(map[int]struct{}, len(s))
+	j := 0
+	for _, v := range s {
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		s[j] = v
+		j++
+	}
+	return s[:j]
 }
 
 func getModel() (maxVert float64) {
@@ -519,11 +595,11 @@ type mapVector struct {
 	Latitude, Longtitude, Elevation float64
 }
 
-type rasterVector struct {
-	RasterX, RasterY uint32
-	mapVector
-}
-
 type mapPrimitiveIndex struct {
 	PrimitiveBottom, PrimitiveTop, PrimitiveLeft int
+}
+
+type triangleID struct {
+	Triangle    fauxgl.Triangle
+	PrimitiveID int
 }
