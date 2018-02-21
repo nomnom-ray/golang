@@ -76,10 +76,9 @@ func main() {
 	//3D-2D conversion
 	triangles, primitiveOnScreen := projection(maxVert, cameraPerspective)
 
-	// pretty.Println("array out of Projection:", primitiveOnScreen)
-
-	if _, ok := rasterPicking(pickedX, pickedY, triangles, primitiveOnScreen, cameraPerspective); ok {
-		// pretty.Println(primitiveSelected)
+	if primitiveSelected, vertexSelected, ok := rasterPicking(pickedX, pickedY, triangles, primitiveOnScreen, cameraPerspective); ok {
+		pretty.Println(primitiveSelected)
+		pretty.Println(vertexSelected)
 	} else {
 		pretty.Println("picking: primitive not selected.")
 	}
@@ -90,8 +89,8 @@ func cameraModel(maxVert float64) fauxgl.Matrix {
 	//camera and projection parameters to create a single matrix
 	cameraRotationLR := float64(0.0)    //-ve rotates camera clockwise in degrees
 	cameraRotationUD := float64(90.0)   //-ve rotates camera downwards in degrees
-	cameraX := float64(0.011)           //-ve pans camera to the right
-	cameraZ := float64(0.0)             //-ve pans camera to the back
+	cameraX := float64(0.012)           //-ve pans camera to the right
+	cameraZ := float64(0.0015)          //-ve pans camera to the back
 	cameraHeight := float64(0.00002252) //height of the camera from ground
 	groundRef := float64(0.0) - 0.02    //ground reference to the lowest ground point in the tile
 
@@ -155,9 +154,10 @@ func projection(maxVert float64, cameraPerspective fauxgl.Matrix) ([]*fauxgl.Tri
 	//constructing a mesh of triangles from index to normalized vertices
 	var triangles []*fauxgl.Triangle
 	counter := 0.0
+	primitiveIDCounter := 0
 
 	primitiveCounter := 0.0
-	for _, index := range primitiveIndex[:5] {
+	for _, index := range primitiveIndex[:] {
 		var triangle fauxgl.Triangle
 		for inner := 0; inner < 3; inner++ {
 			primitiveCounter = math.Mod(counter, 3)
@@ -197,8 +197,10 @@ func projection(maxVert float64, cameraPerspective fauxgl.Matrix) ([]*fauxgl.Tri
 			}
 			counter++
 		}
+		triangle.PrimitiveID = int(primitiveIDCounter)
 		triangle.FixNormals()
 		triangles = append(triangles, &triangle)
+		primitiveIDCounter++
 	}
 	mesh := fauxgl.NewEmptyMesh()
 	triangleMesh := fauxgl.NewTriangleMesh(triangles)
@@ -226,20 +228,18 @@ func projection(maxVert float64, cameraPerspective fauxgl.Matrix) ([]*fauxgl.Tri
 	return triangles, contextRender.PrimitiveSelectable()
 }
 
-func rasterPicking(pickedX, pickedY int, triangles []*fauxgl.Triangle, primitiveOnScreen []int, cameraPerspective fauxgl.Matrix) (int, bool) {
+func rasterPicking(pickedX, pickedY int,
+	triangles []*fauxgl.Triangle, primitiveOnScreen []int, cameraPerspective fauxgl.Matrix) (*fauxgl.Triangle, *fauxgl.Vertex, bool) {
 
 	var trianglesOnScreen []*fauxgl.Triangle
 
 	primitiveOnScreen = sliceUniqMap(primitiveOnScreen)
 
-	// pretty.Println("array in picking:", primitiveOnScreen)
-	// pretty.Println("triangles length:", len(triangles))
-
 	if len(primitiveOnScreen) == 1 {
 		trianglesOnScreen = append(trianglesOnScreen, triangles[primitiveOnScreen[0]])
 	} else if len(primitiveOnScreen) > 1 {
 		for _, i := range primitiveOnScreen {
-			trianglesOnScreen = append(trianglesOnScreen, triangles[primitiveOnScreen[i]])
+			trianglesOnScreen = append(trianglesOnScreen, triangles[i])
 		}
 	}
 
@@ -260,12 +260,15 @@ func rasterPicking(pickedX, pickedY int, triangles []*fauxgl.Triangle, primitive
 	contextPicking.Shader = shader
 	start := time.Now()
 	contextPicking.DrawMesh(meshOnScreen)
-	fmt.Println("**********PICKING**********", time.Since(start), "**********PICKING**********")
+	fmt.Println("***********PICKING***********", time.Since(start), "***********PICKING***********")
 
-	if contextPicking.PrimitiveOnScreen == nil {
-		return 0, false
+	if ok, _ := contextPicking.ReturnedPick(); ok == nil {
+		return nil, nil, false
 	}
-	return primitiveOnScreen[0], true
+
+	triangle, vertex := contextPicking.ReturnedPick()
+
+	return triangle, vertex, true
 }
 
 func sliceUniqMap(s []int) []int {
@@ -597,9 +600,4 @@ type mapVector struct {
 
 type mapPrimitiveIndex struct {
 	PrimitiveBottom, PrimitiveTop, PrimitiveLeft int
-}
-
-type triangleID struct {
-	Triangle    fauxgl.Triangle
-	PrimitiveID int
 }
