@@ -1,0 +1,21 @@
+<html>
+	<head>
+		<title>Register</title>
+		<link rel="stylesheet" type="text/css" href="/static/index.css">
+	</head>
+	<body>
+			{{if . }}
+			<div class="error">{{.}}</div>
+			{{end}}
+		<form method="POST">
+			<!-- <label>Pick a Pixel coordinate in a 1280 by 720 image</label><br /> -->
+			<div>Username: <input type="text" name="username"></div><br />
+			<div>Password: <input type="text" name="password"></div><br />
+            <!-- <input type="text" name="Y-AXIS"><br /> -->
+            <div>
+                <button type="submit">Register</button>
+            </div>
+		</form>
+
+	</body>
+</html>
