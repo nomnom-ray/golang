@@ -1,0 +1,6 @@
+*.csv
+*.png
+*.xlsx
+2DGCS/files/2DGCStest.go
+2DGCS/files/vertexdata.h
+2DGCS/debug

@@ -3,17 +3,19 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/csv"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/kr/pretty"
-
 	"github.com/StefanSchroeder/Golang-Ellipsoid/ellipsoid"
 	"github.com/gocarina/gocsv"
+	"github.com/kr/pretty"
 	"github.com/nfnt/resize"
 	"github.com/nomnom-ray/fauxgl"
 	"googlemaps.github.io/maps"
@@ -28,13 +30,13 @@ const (
 
 	//south-east to north-west
 	//lat goes south north; long east west
-	latEnd, lngEnd      = 43.45270, -80.49600
-	latStart, lngStart  = 43.45050, -80.49300
-	sampleResolutionLat = 0.001 //degrees
-	sampleResolutionLng = 0.001 //degrees
+	latEnd, lngEnd      = 43.45245, -80.49600
+	latStart, lngStart  = 43.45135, -80.49400
+	sampleResolutionLat = 0.00001 //degrees
+	sampleResolutionLng = 0.00001 //degrees
 
 	scale = 4     // optional supersampling
-	fovy  = 30.0  // vertical field of view in degrees
+	fovy  = 60.0  // vertical field of view in degrees
 	near  = 0.001 // near clipping plane
 	far   = 10.0  // far clipping plane
 )
@@ -46,8 +48,8 @@ var (
 	light      = fauxgl.V(0.75, 0.5, 1).Normalize() // light direction
 	color      = fauxgl.HexColor("#ffb5b5")         // object color
 	background = fauxgl.HexColor("#FFF8E3")         // background color
-	pickedX    = 1245
-	pickedY    = 361
+	pickedX    = 500
+	pickedY    = 500
 )
 
 //type declaration is at the very end
@@ -72,7 +74,22 @@ func main() {
 
 	// create a cartesian model with GCS as units
 	maxVert := getModel()
-	cameraPerspective := cameraModel(maxVert)
+
+	//find camera location in GCS
+	cameraLatitude := 43.45167
+	cameraLongtitude := 80.49432
+	cameraElevation := 0.000022503
+	cameraLocation := &mapVector{
+		VertX:      0,
+		VertY:      0,
+		VertZ:      0,
+		Latitude:   cameraLatitude,
+		Longtitude: cameraLongtitude,
+		Elevation:  cameraElevation,
+	}
+	cameraLocation = modeller(cameraLocation)
+
+	cameraPerspective := cameraModel(maxVert, cameraLocation)
 	//3D-2D conversion
 	triangles, primitiveOnScreen := projection(maxVert, cameraPerspective)
 
@@ -85,14 +102,14 @@ func main() {
 
 }
 
-func cameraModel(maxVert float64) fauxgl.Matrix {
-	//camera and projection parameters to create a single matrix
-	cameraRotationLR := float64(0.0)    //-ve rotates camera clockwise in degrees
-	cameraRotationUD := float64(90.0)   //-ve rotates camera downwards in degrees
-	cameraX := float64(0.012)           //-ve pans camera to the right
-	cameraZ := float64(0.0015)          //-ve pans camera to the back
-	cameraHeight := float64(0.00002252) //height of the camera from ground
-	groundRef := float64(0.0) - 0.02    //ground reference to the lowest ground point in the tile
+func cameraModel(maxVert float64, cameraLocation *mapVector) fauxgl.Matrix {
+	// camera and projection parameters to create a single matrix
+	cameraRotationLR := float64(-295)          //-ve rotates camera clockwise in degrees
+	cameraRotationUD := float64(0.0)           //+ve rotates camera downwards in degrees
+	cameraX := float64(cameraLocation.VertX)   //-ve pans camera to the right
+	cameraZ := float64(cameraLocation.VertZ)   //-ve pans camera to the back
+	cameraHeight := float64(0.00002252)        //height of the camera from ground
+	groundRef := float64(cameraLocation.VertY) //ground reference to the lowest ground point in the tile
 
 	cameraPosition := fauxgl.Vector{
 		X: cameraX / maxVert,
@@ -117,7 +134,64 @@ func cameraModel(maxVert float64) fauxgl.Matrix {
 		cameraPosition, (cameraPosition).Add(cameraViewDirection), cameraUp).Perspective(
 		fovy, imageAspectRatio, near, far)
 
+	// pretty.Println("camera location:", cameraLocation)
+
 	return cameraPerspective
+}
+
+func modeller(cameraLocation *mapVector) *mapVector {
+
+	var compositeVector []*mapVector
+	compositeVector = append(compositeVector, cameraLocation)
+
+	clientsFile, err := os.Open("resultNormModelProperties.csv")
+	if err != nil {
+		panic(err)
+	}
+	defer clientsFile.Close()
+
+	propertiesReader := csv.NewReader(bufio.NewReader(clientsFile))
+
+	var _, minVertX, minVertZ float64
+
+	for i := 0; i < 7; i++ {
+		property, error := propertiesReader.Read()
+		if error == io.EOF {
+			break
+		} else if error != nil {
+			log.Fatal(error)
+		}
+		_, err = strconv.ParseFloat(property[3], 64)
+		if err != nil {
+			panic(err)
+		}
+		minVertX, _ = strconv.ParseFloat(property[4], 64)
+		minVertZ, _ = strconv.ParseFloat(property[6], 64)
+	}
+
+	//localize the area using the minimum component of each vector as reference
+	for i := 0; i <= int(len(compositeVector)-1); i++ {
+		compositeVector[i].VertX = (math.Abs(compositeVector[i].Latitude) - minVertX)
+		compositeVector[i].VertY = compositeVector[i].Elevation
+		compositeVector[i].VertZ = (math.Abs(compositeVector[i].Longtitude) - minVertZ)
+	}
+
+	// var normModel []*mapVector
+	// 	//read 3D vector model into struct
+	// 	clientsFile2, err := os.Open("resultNormModel.csv")
+	// 	if err != nil {
+	// 		panic(err)
+	// 	}
+	// 	defer clientsFile2.Close()
+	// 	if err := gocsv.UnmarshalFile(clientsFile2, &normModel); err != nil {
+	// 		panic(err)
+	// 	}
+
+	// for _,normVertex:=range normModel{
+
+	// }
+
+	return cameraLocation
 }
 
 func projection(maxVert float64, cameraPerspective fauxgl.Matrix) ([]*fauxgl.Triangle, []int) {
@@ -151,6 +225,8 @@ func projection(maxVert float64, cameraPerspective fauxgl.Matrix) ([]*fauxgl.Tri
 		compositeVector[i].VertZ = compositeVector[i].VertZ / maxVert
 	}
 
+	// pretty.Println("map location:", compositeVector[6464])
+
 	//constructing a mesh of triangles from index to normalized vertices
 	var triangles []*fauxgl.Triangle
 	counter := 0.0
@@ -162,12 +238,12 @@ func projection(maxVert float64, cameraPerspective fauxgl.Matrix) ([]*fauxgl.Tri
 		for inner := 0; inner < 3; inner++ {
 			primitiveCounter = math.Mod(counter, 3)
 			if primitiveCounter == 0 {
-				triangle.V1.Position = fauxgl.Vector{
+				triangle.V3.Position = fauxgl.Vector{
 					X: compositeVector[index.PrimitiveBottom].VertX,
 					Y: compositeVector[index.PrimitiveBottom].VertY,
 					Z: compositeVector[index.PrimitiveBottom].VertZ,
 				}
-				triangle.V1.Texture = fauxgl.Vector{
+				triangle.V3.Texture = fauxgl.Vector{
 					X: compositeVector[index.PrimitiveBottom].Latitude,
 					Y: compositeVector[index.PrimitiveBottom].Elevation,
 					Z: compositeVector[index.PrimitiveBottom].Longtitude,
@@ -184,12 +260,12 @@ func projection(maxVert float64, cameraPerspective fauxgl.Matrix) ([]*fauxgl.Tri
 					Z: compositeVector[index.PrimitiveTop].Longtitude,
 				}
 			} else if primitiveCounter == 2 {
-				triangle.V3.Position = fauxgl.Vector{
+				triangle.V1.Position = fauxgl.Vector{
 					X: compositeVector[index.PrimitiveLeft].VertX,
 					Y: compositeVector[index.PrimitiveLeft].VertY,
 					Z: compositeVector[index.PrimitiveLeft].VertZ,
 				}
-				triangle.V3.Texture = fauxgl.Vector{
+				triangle.V1.Texture = fauxgl.Vector{
 					X: compositeVector[index.PrimitiveLeft].Latitude,
 					Y: compositeVector[index.PrimitiveLeft].Elevation,
 					Z: compositeVector[index.PrimitiveLeft].Longtitude,
@@ -213,8 +289,7 @@ func projection(maxVert float64, cameraPerspective fauxgl.Matrix) ([]*fauxgl.Tri
 	// contextRender.ClearDepthBuffer()
 
 	//shading
-	shader := fauxgl.NewPhongShader(cameraPerspective, light, eye)
-	shader.ObjectColor = color
+	shader := fauxgl.NewSolidColorShader(cameraPerspective, color)
 	contextRender.Shader = shader
 	start := time.Now()
 	contextRender.DrawMesh(mesh)
@@ -255,8 +330,7 @@ func rasterPicking(pickedX, pickedY int,
 	// contextPicking.ClearDepthBuffer()
 
 	//shading
-	shader := fauxgl.NewPhongShader(cameraPerspective, light, eye)
-	shader.ObjectColor = color
+	shader := fauxgl.NewSolidColorShader(cameraPerspective, color)
 	contextPicking.Shader = shader
 	start := time.Now()
 	contextPicking.DrawMesh(meshOnScreen)
@@ -314,6 +388,8 @@ func getModel() (maxVert float64) {
 		}
 		minVertX := math.Abs(compositeVector[0].Latitude)
 		minVertZ := math.Abs(compositeVector[0].Longtitude)
+		//localize the maximum elevation to the ground reference
+		maxVertY = maxVertY - minVertY
 
 		//localize the area using the minimum component of each vector as reference
 		for i := 0; i <= int(len(compositeVector)-1); i++ {
@@ -325,18 +401,41 @@ func getModel() (maxVert float64) {
 		maxVertZ := math.Abs(compositeVector[len(compositeVector)-1].VertZ)
 		maxVert = math.Max(math.Max(maxVertX, maxVertZ), maxVertY)
 
-		clientsFile2, err := os.OpenFile("resultNormModel.csv", os.O_RDWR|os.O_CREATE, os.ModePerm)
-		if err != nil {
-			panic(err)
-		}
-		defer clientsFile2.Close()
-		err = gocsv.MarshalFile(&compositeVector, clientsFile2)
-		if err != nil {
-			panic(err)
+		// clientsFile2, err := os.OpenFile("resultNormModel.csv", os.O_RDWR|os.O_CREATE, os.ModePerm)
+		// if err != nil {
+		// 	panic(err)
+		// }
+		// defer clientsFile2.Close()
+		// err = gocsv.MarshalFile(&compositeVector, clientsFile2)
+		// if err != nil {
+		// 	panic(err)
+		// }
+
+		data := [][]string{
+			{strconv.FormatFloat(maxVertX, 'E', -1, 64),
+				strconv.FormatFloat(maxVertY, 'E', -1, 64),
+				strconv.FormatFloat(maxVertZ, 'E', -1, 64),
+				strconv.FormatFloat(maxVert, 'E', -1, 64),
+				strconv.FormatFloat(minVertX, 'E', -1, 64),
+				strconv.FormatFloat(minVertY, 'E', -1, 64),
+				strconv.FormatFloat(minVertZ, 'E', -1, 64)},
 		}
 
+		file, err := os.Create("resultNormModelProperties.csv")
+		checkError("Cannot create file", err)
+		defer file.Close()
+
+		writer := csv.NewWriter(file)
+		defer writer.Flush()
+
+		for _, value := range data {
+			err := writer.Write(value)
+			checkError("Cannot write to file", err)
+		}
+
+		return maxVert
 	*/
-	return 0.0030232
+	return 0.00199
 }
 
 func getMapVector(apiKey *string) ([]*mapVector, []*mapPrimitiveIndex) {
@@ -591,6 +690,12 @@ func round(f float64) int {
 		return 0
 	}
 	return int(f + math.Copysign(0.5, f))
+}
+
+func checkError(message string, err error) {
+	if err != nil {
+		log.Fatal(message, err)
+	}
 }
 
 type mapVector struct {
