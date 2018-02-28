@@ -1,15 +1,16 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
 	"text/template"
 	"time"
 
+	"github.com/go-redis/redis"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
-	"github.com/kr/pretty"
 )
 
 type Message struct {
@@ -18,14 +19,19 @@ type Message struct {
 	TestMessage string `json:"message"`
 }
 
+type MessageProcessed struct {
+	Messageprocessed string `json:"messageprocessed"`
+}
+
 var templates *template.Template
 
-func indexGetHandler(w http.ResponseWriter, r *http.Request) {
-	templates.ExecuteTemplate(w, "index.html", nil)
-}
+//to be globally accessable by multiple routes
+var client *redis.Client
 
 func main() {
 	// flag.Parse()
+
+	Init()
 
 	templates = template.Must(template.ParseGlob("index.html"))
 
@@ -41,18 +47,23 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8080", r))
 }
 
-func homeHandler(tpl *template.Template) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tpl.Execute(w, r)
+//Init serves clients from redis ??? not sure advantage over direct
+func Init() {
+	client = redis.NewClient(&redis.Options{
+		Addr: "localhost:6379", //default port of redis-server; lo-host when same machine
 	})
+}
+
+func indexGetHandler(w http.ResponseWriter, r *http.Request) {
+	templates.ExecuteTemplate(w, "index.html", nil)
 }
 
 // ###############################################################################
 // ###############################################################################
 
 type connection struct {
-	// Buffered channel of outbound messages.
-	send chan Message
+	// unBuffered channel of outbound messages.
+	send chan MessageProcessed
 
 	// The hub.
 	h *hub
@@ -66,24 +77,26 @@ type hub struct {
 	connections map[*connection]struct{}
 
 	// Inbound messages from the connections.
-	broadcast chan Message
+	broadcast chan MessageProcessed
 
-	logMx sync.RWMutex
-	log   [][]byte
+	process chan Message
+
+	// logMx sync.RWMutex
+	// log [][]byte
 }
 
 func newHub() *hub {
 	h := &hub{
 		connectionsMx: sync.RWMutex{},
-		broadcast:     make(chan Message),
 		connections:   make(map[*connection]struct{}),
+		broadcast:     make(chan MessageProcessed),
+		process:       make(chan Message),
 	}
 
 	go func() {
 		for {
 			msg := <-h.broadcast
 			h.connectionsMx.RLock()
-
 			for connections := range h.connections {
 				select {
 				case connections.send <- msg: //send msg to connection type on connection channel
@@ -126,13 +139,14 @@ func (wsh *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c := &connection{send: make(chan Message), h: wsh}
+	c := &connection{send: make(chan MessageProcessed), h: wsh}
 	c.h.addConnection(c)
 	defer c.h.removeConnection(c)
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go c.writer(&wg, wsConn)
+	go c.process(&wg, wsConn)
 	go c.reader(&wg, wsConn)
 	wg.Wait()
 	wsConn.Close()
@@ -146,16 +160,12 @@ func (c *connection) reader(wg *sync.WaitGroup, wsConn *websocket.Conn) {
 
 	//read message from clients
 	for {
-
 		var message Message
-
 		err := wsConn.ReadJSON(&message)
 		if err != nil {
 			break
 		}
-		pretty.Println(message.Name, message.Number, message.TestMessage)
-
-		c.h.broadcast <- message
+		c.h.process <- message
 	}
 }
 
@@ -167,4 +177,56 @@ func (c *connection) writer(wg *sync.WaitGroup, wsConn *websocket.Conn) {
 			break
 		}
 	}
+}
+
+// ###############################################################################
+// ###############################################################################
+
+func (c *connection) process(wg *sync.WaitGroup, wsConn *websocket.Conn) {
+	defer wg.Done()
+	for {
+
+		message := <-c.h.process
+
+		mID, err := client.Incr("message:next-id").Result() //assign id to assignment to redis
+		if err != nil {
+			return
+		}
+		key := fmt.Sprintf("message:%d", mID) //prefix id to create distinct namespace
+
+		var processedMessage MessageProcessed
+
+		processedMessage.Messageprocessed = concatenate(message)
+
+		var m = make(map[string]interface{})
+		m["name"] = message.Name
+		m["number"] = message.Number
+		m["testMessage"] = message.TestMessage
+
+		client.HMSet(key, m)
+		client.LPush("id", key)
+
+		// messageList, err := client.LRange(key, 0, client.LLen("id").Val()).Result()
+		// if err != nil {
+		// 	return
+		// }
+
+		// var messageDB Message
+
+		// for _, i := range messageList {
+		// 	messageDB.Name = client.HMGet(i, "name").String()
+		// 	messageDB.Number = 0
+		// 	messageDB.TestMessage = client.HMGet(i, "testMessage").String()
+		// }
+
+		c.h.broadcast <- processedMessage
+	}
+
+}
+
+func concatenate(message Message) string {
+
+	messageString := fmt.Sprintf("%s%d%s", message.Name, message.Number, message.TestMessage)
+
+	return messageString
 }
