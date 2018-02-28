@@ -7,21 +7,38 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"github.com/kr/pretty"
 )
+
+type Message struct {
+	Name        string `json:"name"`
+	Number      int    `json:"number"`
+	TestMessage string `json:"message"`
+}
+
+var templates *template.Template
+
+func indexGetHandler(w http.ResponseWriter, r *http.Request) {
+	templates.ExecuteTemplate(w, "index.html", nil)
+}
 
 func main() {
 	// flag.Parse()
-	tpl := template.Must(template.ParseFiles("index.html"))
+
+	templates = template.Must(template.ParseGlob("index.html"))
 
 	h := newHub()
 
-	router := http.NewServeMux()
-	router.Handle("/", homeHandler(tpl))
-	router.HandleFunc("/ws", h.ServeHTTP)
+	r := mux.NewRouter()
+	r.HandleFunc("/", indexGetHandler)
+	r.HandleFunc("/ws", h.ServeHTTP)
+
+	http.Handle("/", r) //use the mux router as the default handler
 
 	log.Printf("serving on port 8080")
-	log.Fatal(http.ListenAndServe(":8080", router))
+	log.Fatal(http.ListenAndServe(":8080", r))
 }
 
 func homeHandler(tpl *template.Template) http.Handler {
@@ -35,7 +52,7 @@ func homeHandler(tpl *template.Template) http.Handler {
 
 type connection struct {
 	// Buffered channel of outbound messages.
-	send chan []byte
+	send chan Message
 
 	// The hub.
 	h *hub
@@ -49,7 +66,7 @@ type hub struct {
 	connections map[*connection]struct{}
 
 	// Inbound messages from the connections.
-	broadcast chan []byte
+	broadcast chan Message
 
 	logMx sync.RWMutex
 	log   [][]byte
@@ -58,7 +75,7 @@ type hub struct {
 func newHub() *hub {
 	h := &hub{
 		connectionsMx: sync.RWMutex{},
-		broadcast:     make(chan []byte),
+		broadcast:     make(chan Message),
 		connections:   make(map[*connection]struct{}),
 	}
 
@@ -66,6 +83,7 @@ func newHub() *hub {
 		for {
 			msg := <-h.broadcast
 			h.connectionsMx.RLock()
+
 			for connections := range h.connections {
 				select {
 				case connections.send <- msg: //send msg to connection type on connection channel
@@ -108,7 +126,7 @@ func (wsh *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c := &connection{send: make(chan []byte, 256), h: wsh}
+	c := &connection{send: make(chan Message), h: wsh}
 	c.h.addConnection(c)
 	defer c.h.removeConnection(c)
 
@@ -128,10 +146,15 @@ func (c *connection) reader(wg *sync.WaitGroup, wsConn *websocket.Conn) {
 
 	//read message from clients
 	for {
-		_, message, err := wsConn.ReadMessage()
+
+		var message Message
+
+		err := wsConn.ReadJSON(&message)
 		if err != nil {
 			break
 		}
+		pretty.Println(message.Name, message.Number, message.TestMessage)
+
 		c.h.broadcast <- message
 	}
 }
@@ -139,7 +162,7 @@ func (c *connection) reader(wg *sync.WaitGroup, wsConn *websocket.Conn) {
 func (c *connection) writer(wg *sync.WaitGroup, wsConn *websocket.Conn) {
 	defer wg.Done()
 	for message := range c.send {
-		err := wsConn.WriteMessage(websocket.TextMessage, message)
+		err := wsConn.WriteJSON(message)
 		if err != nil {
 			break
 		}
