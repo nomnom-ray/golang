@@ -7,12 +7,13 @@
     <script type="text/javascript">
     $(function() {
     var conn;
-    var msg = $("#msg");
+    var pixelX = $("#pixelX");
+    var pixelY = $("#pixelY");
     var log = $("#log");
-    function appendLog(msg) {
+    function appendLog(pixelX) {
         var d = log[0]
         var doScroll = d.scrollTop == d.scrollHeight - d.clientHeight;
-        msg.appendTo(log)
+        pixelX.appendTo(log)
         if (doScroll) {
             d.scrollTop = d.scrollHeight - d.clientHeight;
         }
@@ -20,28 +21,28 @@
 
     $("#form").submit(function() {
         var testMessage = {
-            name: "test",
-            number: 42,
-            message: msg.val()
+            pixelX: parseInt(pixelX.val()),
+            pixelY: parseInt(pixelY.val())
         }
         testMessage = JSON.stringify(testMessage);
         
         if (!conn) {
             return false;
         }
-        if (!msg.val()) {
+        if (!pixelX.val()) {
             return false;
         }
         conn.send(testMessage);
-        msg.val("");
+        pixelX.val("");
+        pixelY.val("");
         return false
     });
     if (window["WebSocket"]) {
         conn = new WebSocket("ws://localhost:8080/ws");
         
         conn.addEventListener('message', function(e){
-            var msg=JSON.parse(e.data);
-            appendLog($("<div/>").text(msg.messageprocessed))
+            var msgServer=JSON.parse(e.data);
+            appendLog($("<div/>").text(msgServer.messageprocessed))
         });
 
         conn.onclose = function(evt) {
@@ -90,7 +91,7 @@
 <body>
     <div id="log"></div>
     <form id="form" name="form">
-        <input type="submit" value="Send"> <input id="msg" size="64" type="text">
+        <input type="submit" value="Send"> pixelX:<input id="pixelX" size="16" type="text"> pixelY:<input id="pixelY" size="16" type="text">
     </form>
 </body>
 </html>

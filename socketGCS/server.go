@@ -14,9 +14,8 @@ import (
 )
 
 type Message struct {
-	Name        string `json:"name"`
-	Number      int    `json:"number"`
-	TestMessage string `json:"message"`
+	PixelX int64 `json:"pixelX"`
+	PixelY int64 `json:"pixelY"`
 }
 
 type MessageProcessed struct {
@@ -199,9 +198,8 @@ func (c *connection) process(wg *sync.WaitGroup, wsConn *websocket.Conn) {
 		processedMessage.Messageprocessed = concatenate(message)
 
 		var m = make(map[string]interface{})
-		m["name"] = message.Name
-		m["number"] = message.Number
-		m["testMessage"] = message.TestMessage
+		m["pixelX"] = message.PixelX
+		m["pixelY"] = message.PixelY
 
 		client.HMSet(key, m)
 		client.LPush("id", key)
@@ -226,7 +224,10 @@ func (c *connection) process(wg *sync.WaitGroup, wsConn *websocket.Conn) {
 
 func concatenate(message Message) string {
 
-	messageString := fmt.Sprintf("%s%d%s", message.Name, message.Number, message.TestMessage)
+	messageString := fmt.Sprintf("%d%d", message.PixelX, message.PixelY)
 
 	return messageString
 }
+
+// ###############################################################################
+// ###############################################################################
