@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	windWidth        = 1280.0
-	windHeight       = 720.0
+	windWidth        = 600 //1280.0
+	windHeight       = 600 //720.0
 	degRadConversion = math.Pi / 180
 	imageAspectRatio = windWidth / windHeight
 
@@ -36,7 +36,7 @@ const (
 	sampleResolutionLng = 0.00001 //degrees
 
 	scale = 4     // optional supersampling
-	fovy  = 60.0  // vertical field of view in degrees
+	fovy  = 90.0  // vertical field of view in degrees
 	near  = 0.001 // near clipping plane
 	far   = 10.0  // far clipping plane
 )
@@ -76,9 +76,9 @@ func main() {
 	maxVert := getModel()
 
 	//find camera location in GCS
-	cameraLatitude := 43.45167
-	cameraLongtitude := 80.49432
-	cameraElevation := 0.000022503
+	cameraLatitude := 43.4515683
+	cameraLongtitude := -80.4959493
+	cameraElevation := 0.000025
 	cameraLocation := &mapVector{
 		VertX:      0,
 		VertY:      0,
@@ -104,12 +104,12 @@ func main() {
 
 func cameraModel(maxVert float64, cameraLocation *mapVector) fauxgl.Matrix {
 	// camera and projection parameters to create a single matrix
-	cameraRotationLR := float64(-295)          //-ve rotates camera clockwise in degrees
-	cameraRotationUD := float64(0.0)           //+ve rotates camera downwards in degrees
-	cameraX := float64(cameraLocation.VertX)   //-ve pans camera to the right
-	cameraZ := float64(cameraLocation.VertZ)   //-ve pans camera to the back
-	cameraHeight := float64(0.00002252)        //height of the camera from ground
-	groundRef := float64(cameraLocation.VertY) //ground reference to the lowest ground point in the tile
+	cameraRotationLR := float64(-90) - 90       //-ve rotates camera clockwise in degrees
+	cameraRotationUD := float64(-20.0)          //-ve rotates camera downwards in degrees
+	cameraX := float64(cameraLocation.VertX)    //-ve pans camera to the right
+	cameraZ := float64(cameraLocation.VertZ)    //-ve pans camera to the back
+	cameraHeight := float64(-0.00002252)        //height of the camera from ground
+	groundRef := float64(-cameraLocation.VertY) //ground reference to the lowest ground point in the tile
 
 	cameraPosition := fauxgl.Vector{
 		X: cameraX / maxVert,
@@ -123,7 +123,7 @@ func cameraModel(maxVert float64, cameraLocation *mapVector) fauxgl.Matrix {
 	}
 	cameraUp := fauxgl.Vector{
 		X: 0,
-		Y: 1,
+		Y: -1,
 		Z: 0,
 	}
 	cameraViewDirection = fauxgl.QuatRotate(
@@ -133,6 +133,10 @@ func cameraModel(maxVert float64, cameraLocation *mapVector) fauxgl.Matrix {
 	cameraPerspective := fauxgl.LookAt(
 		cameraPosition, (cameraPosition).Add(cameraViewDirection), cameraUp).Perspective(
 		fovy, imageAspectRatio, near, far)
+
+	// camera := fauxgl.LookAt(cameraPosition, (cameraPosition).Add(cameraViewDirection), cameraUp)
+	// perspective := fauxgl.PerspectiveGL(fovy, imageAspectRatio, near, far)
+	// cameraPerspective := perspective.Mul(camera).Scale(fauxgl.Vector{10, 10, 1})
 
 	// pretty.Println("camera location:", cameraLocation)
 
@@ -238,12 +242,12 @@ func projection(maxVert float64, cameraPerspective fauxgl.Matrix) ([]*fauxgl.Tri
 		for inner := 0; inner < 3; inner++ {
 			primitiveCounter = math.Mod(counter, 3)
 			if primitiveCounter == 0 {
-				triangle.V3.Position = fauxgl.Vector{
+				triangle.V1.Position = fauxgl.Vector{
 					X: compositeVector[index.PrimitiveBottom].VertX,
 					Y: compositeVector[index.PrimitiveBottom].VertY,
 					Z: compositeVector[index.PrimitiveBottom].VertZ,
 				}
-				triangle.V3.Texture = fauxgl.Vector{
+				triangle.V1.Texture = fauxgl.Vector{
 					X: compositeVector[index.PrimitiveBottom].Latitude,
 					Y: compositeVector[index.PrimitiveBottom].Elevation,
 					Z: compositeVector[index.PrimitiveBottom].Longtitude,
@@ -260,12 +264,12 @@ func projection(maxVert float64, cameraPerspective fauxgl.Matrix) ([]*fauxgl.Tri
 					Z: compositeVector[index.PrimitiveTop].Longtitude,
 				}
 			} else if primitiveCounter == 2 {
-				triangle.V1.Position = fauxgl.Vector{
+				triangle.V3.Position = fauxgl.Vector{
 					X: compositeVector[index.PrimitiveLeft].VertX,
 					Y: compositeVector[index.PrimitiveLeft].VertY,
 					Z: compositeVector[index.PrimitiveLeft].VertZ,
 				}
-				triangle.V1.Texture = fauxgl.Vector{
+				triangle.V3.Texture = fauxgl.Vector{
 					X: compositeVector[index.PrimitiveLeft].Latitude,
 					Y: compositeVector[index.PrimitiveLeft].Elevation,
 					Z: compositeVector[index.PrimitiveLeft].Longtitude,

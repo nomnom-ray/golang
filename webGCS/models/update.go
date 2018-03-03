@@ -49,7 +49,7 @@ func (update *Update) GetUser() (*User, error) {
 	return GetUserbyID(userID)
 }
 
-// queryUpdates is a helper function to get comments
+// queryUpdates is a helper function to get updates
 func queryUpdates(key string) ([]*Update, error) {
 	updateIDs, err := client.LRange(key, 0, 10).Result()
 	if err != nil {

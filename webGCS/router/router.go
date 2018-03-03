@@ -48,7 +48,7 @@ func indexGetHandler(w http.ResponseWriter, r *http.Request) {
 		Updates     []*models.Update
 		DisplayForm bool
 	}{
-		Title:       "All updates",
+		Title:       "WEBGCS Data Management",
 		Updates:     updates,
 		DisplayForm: true,
 	})
